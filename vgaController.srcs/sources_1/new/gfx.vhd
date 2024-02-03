@@ -1,55 +1,55 @@
-----------------------------------------------------------------------------------
--- Krmilnik za VGA - glavni modul
--- Verzija: 2024-01-10
-----------------------------------------------------------------------------------
-
 library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;
 
-entity vgaController is
-    Port ( CLK100MHZ : in STD_LOGIC;
+entity gfx is
+    port ( CLK100MHZ : in STD_LOGIC;
            CPU_RESETN : in STD_LOGIC;
            SW         : in STD_LOGIC_VECTOR(0 downto 0);
            VGA_HS : out STD_LOGIC;
            VGA_VS : out STD_LOGIC;
            VGA_R  : out STD_LOGIC_VECTOR(3 downto 0);
            VGA_G  : out STD_LOGIC_VECTOR(3 downto 0);
-           VGA_B  : out STD_LOGIC_VECTOR(3 downto 0)
-           );
-end vgaController;
+           VGA_B  : out STD_LOGIC_VECTOR(3 downto 0);
+           
+           start_x : integer;
+           start_y : integer;
+           
+           line1_x : integer;
+           line1_y : integer;
+           line1_rgb : std_logic_vector (0 to 11);
 
-architecture Behavioral of vgaController is
+           line2_x : integer;
+           line2_y : integer;
+           line2_rgb : std_logic_vector (0 to 11);
+           
+           backgroundRGB : std_logic_vector (0 to 11)
+    );
+end gfx;
 
-signal CE : std_logic;
-signal rst : std_logic;
-signal display_area_h : std_logic;
-signal display_area_v : std_logic;
-signal display_area   : std_logic;
-signal column : natural range 0 to 639;
-signal row    : natural range 0 to 479;
+architecture Behavioral of gfx is
+    signal CE : std_logic;
+    signal rst : std_logic;
+    signal display_area_h : std_logic;
+    signal display_area_v : std_logic;
+    signal display_area   : std_logic;
+    signal column : natural range 0 to 639;
+    signal row    : natural range 0 to 479;
 
-signal WE : std_logic;
-signal ADDR_WRITE : std_logic_vector (4 downto 0);
-signal ADDR_READ : std_logic_vector (4 downto 0);
-signal DATA_WRITE : std_logic_vector (0 to 479);
-signal DATA_READ : std_logic_vector (0 to 479);
+    signal WE : std_logic;
+    signal ADDR_WRITE : std_logic_vector (4 downto 0);
+    signal ADDR_READ : std_logic_vector (4 downto 0);
+    signal DATA_WRITE : std_logic_vector (0 to 479);
+    signal DATA_READ : std_logic_vector (0 to 479);
 
-signal row_scaled : natural range 0 to 31;
-signal column_scaled : natural range 0 to 39;
+    signal row_scaled : natural range 0 to 31;
+    signal column_scaled : natural range 0 to 39;
 
-signal currently_drawing_row : natural range 0 to 31 := 0;
-signal WE_cycle : natural range 0 to 3 := 0;
-
-signal WL : std_logic := '0';
-
-signal start_x : integer := 20;
-signal start_y : integer := 0;
-signal line1_x : integer := 20;
-signal line1_y : integer := 20;
-signal line1_rgb : std_logic_vector (0 to 11) := "111001001001";
-constant backgroundRGB : std_logic_vector (0 to 11) := "000000000000";
-
+    signal currently_drawing_row : natural range 0 to 31 := 0;
+    signal WE_cycle : natural range 0 to 3 := 0;
+    
+    signal WL : std_logic := '0';    
+    
 begin
     rst <= not CPU_RESETN;
     
@@ -88,43 +88,43 @@ begin
     display_area <= display_area_h AND display_area_v;
     
     process (SW, display_area, row, column)
-    begin
-        row_scaled <= (row / 15);
-        column_scaled <= (column / 16);
+        begin
+            row_scaled <= (row / 15);
+            column_scaled <= (column / 16);
         
-        ADDR_READ <= std_logic_vector(to_signed(row_scaled, ADDR_READ'length));
+            ADDR_READ <= std_logic_vector(to_signed(row_scaled, ADDR_READ'length));
         
-        if SW = "0" then
-            if display_area = '1' then
-                VGA_R <= DATA_READ((column_scaled * 12) to (column_scaled * 12) + 3);
-                VGA_G <= DATA_READ(((column_scaled * 12) + 4) to ((column_scaled * 12) + 7));
-                VGA_B <= DATA_READ(((column_scaled * 12) + 8) to ((column_scaled * 12) + 11)); 
+            if SW = "0" then
+                if display_area = '1' then
+                    VGA_R <= DATA_READ((column_scaled * 12) to (column_scaled * 12) + 3);
+                    VGA_G <= DATA_READ(((column_scaled * 12) + 4) to ((column_scaled * 12) + 7));
+                    VGA_B <= DATA_READ(((column_scaled * 12) + 8) to ((column_scaled * 12) + 11)); 
+                else
+                    VGA_R <= "0000";
+                    VGA_G <= "0000";
+                    VGA_B <= "0000";                
+                end if;  
             else
-                VGA_R <= "0000";
-                VGA_G <= "0000";
-                VGA_B <= "0000";                
-            end if;  
-        else
-            -- bel rob            
-            if display_area='1' and (row=0 or row=479 or column=0 or column=639) then    
-                VGA_R <= "1111";
-                VGA_G <= "1111";
-                VGA_B <= "1111";
-            else
-                VGA_R <= "0000";
-                VGA_G <= "0000";
-                VGA_B <= "0000";
+                -- bel rob            
+                if display_area='1' and (row=0 or row=479 or column=0 or column=639) then    
+                    VGA_R <= "1111";
+                    VGA_G <= "1111";
+                    VGA_B <= "1111";
+                else
+                    VGA_R <= "0000";
+                    VGA_G <= "0000";
+                    VGA_B <= "0000";
+                end if;
             end if;
-        end if;
     end process;
     
     -- This process is used for drawing stuff
     process(CLK100MHZ)
-    begin
-        -- 1st tick row gets filled, 2nd tick pause, 3rd tick WE to 0, repeat
-        if rising_edge(CLK100MHZ) then
-            -- Write to RAM every INTERVAL ticks and set WE to 1
-            if WE_cycle = 0 then
+        begin
+            -- 1st tick row gets filled, 2nd tick pause, 3rd tick WE to 0, repeat
+            if rising_edge(CLK100MHZ) then
+                -- Write to RAM every INTERVAL ticks and set WE to 1
+                if WE_cycle = 0 then
                     --DATA_WRITE <= "111001001001111001001001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
                     ADDR_WRITE <= std_logic_vector(to_unsigned(currently_drawing_row, ADDR_WRITE'length)); -- Update the address of the row that we are writing to
                     
@@ -160,5 +160,4 @@ begin
         end if;
     end process;
     
-
 end Behavioral;
