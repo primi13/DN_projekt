@@ -17,20 +17,20 @@ end top;
 
 architecture Behavioral of top is
     signal rst : std_logic;
-    constant clk_interval : integer := 10e6;
+    constant clk_interval : integer := 3*10e6;
     signal clk_counter : integer := 0;
     
-    -- Signals for lines
-    signal start_x : integer := 20;
+    -- Signals for GFX
+    signal start_x : integer := 19;
     signal start_y : integer := 0;
     
-    signal line1_x : integer := 20;
+    signal line1_x : integer := 1;
     signal line1_y : integer := 20;
     signal line1_rgb : std_logic_vector (0 to 11) := "111001001001";
     
-    signal line2_x : integer;
-    signal line2_y : integer;
-    signal line2_rgb : std_logic_vector (0 to 11);
+    signal line2_x : integer := 30;
+    signal line2_y : integer := 15;
+    signal line2_rgb : std_logic_vector (0 to 11) := "111111110000";
     
     constant backgroundRGB : std_logic_vector (0 to 11) := "000000000000";
 begin
@@ -68,6 +68,12 @@ process(CLK100MHZ)
                 line1_x <= 0;
             else
                 line1_x <= line1_x + 1;
+            end if;
+            
+            if line2_y = 31 then
+                line2_y <= 0;
+            else
+                line2_y <= line2_y + 1;
             end if;
             
             clk_counter <= 0;

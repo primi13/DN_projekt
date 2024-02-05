@@ -48,7 +48,141 @@ architecture Behavioral of gfx is
     signal currently_drawing_row : natural range 0 to 31 := 0;
     signal WE_cycle : natural range 0 to 3 := 0;
     
-    signal WL : std_logic := '0';    
+    signal WL : std_logic := '0';
+    
+-- Function that makes a color darker
+function darken(inputColor: std_logic_vector(11 downto 0)) return std_logic_vector is
+    variable r, g, b: std_logic_vector(0 to 3);
+    begin
+        -- Extract RGB components from the input color
+        r := inputColor(11 downto 8);
+        g := inputColor(7 downto 4);
+        b := inputColor(3 downto 0);
+    
+        -- Make each color component 50% darker
+        r := std_logic_vector(shift_right(unsigned(r), 2));
+        g := std_logic_vector(shift_right(unsigned(g), 2));
+        b := std_logic_vector(shift_right(unsigned(b), 2));
+    
+        -- Recombine the components into a single 12-bit color
+        return (r & g & b); -- Concatenate the darker components
+end darken;
+    
+    
+-- Functions used for telling for a pixel if line goes through it or not
+    -- Better one
+--function should_place_dot(x, y, in_x0, in_y0, in_x1, in_y1: integer) return boolean is
+--    variable dx, dy, sx, sy, err, e2: integer;
+--    variable x0, y0, x1, y1: integer;
+    
+--	begin
+--        x0 := in_x0;
+--        y0 := in_y0;
+--        x1 := in_x1;
+--        y1 := in_y1;
+--		dx := abs(x1 - x0); -- VHDL's abs function computes the absolute value
+--		dy := -(abs(y1 - y0));
+--		if x0 < x1 then
+--			sx := 1;
+--		else
+--			sx := -1;
+--		end if;
+--		if y0 < y1 then
+--			sy := 1;
+--		else
+--			sy := -1;
+--		end if;
+--		err := dx + dy;
+		
+--		for i in 0 to 52 loop
+--			if x0 = x and y0 = y then
+--				return true; -- The function returns true if the current point matches
+--			end if;
+--			if x0 = x1 and y0 = y1 then
+--				exit; -- Exit the loop if the end point is reached
+--			end if;
+--			e2 := 2 * err;
+--			if e2 >= dy then
+--				err := err + dy;
+--				x0 := x0 + sx;
+--			end if;
+--			if e2 <= dx then
+--				err := err + dx;
+--				y0 := y0 + sy;
+--			end if;
+--		end loop;
+		
+--		return false; -- Return false if the point does not match
+--end function;
+
+    -- Fast one
+function min(a, b: integer) return integer is
+begin
+    if a < b then
+        return a;
+    else
+        return b;
+    end if;
+end function;
+
+function max(a, b: integer) return integer is
+begin
+    if a > b then
+        return a;
+    else
+        return b;
+    end if;
+end function;
+
+function should_place_dot(x, y, in_x0, in_y0, in_x1, in_y1: integer) return boolean is
+    variable m, b, y_line: integer;
+    variable is_vertical_line: boolean;
+    variable x0, y0, x1, y1: integer;
+    begin
+        x0 := in_x0;
+        y0 := in_y0;
+        x1 := in_x1;
+        y1 := in_y1;
+        m := 0;
+        b := 0;
+        y_line := 0;
+        
+        -- Check if start or end point
+        if (x = x0 and y = y0) or (x = x1 and y = y1) then
+            return true;
+        end if;
+        
+        -- Check for a vertical line
+        if x0 = x1 then
+            is_vertical_line := true;
+        else
+            is_vertical_line := false;
+            -- Calculate slope (m) and y-intercept (b), scaled by 1000 for precision
+            m := (y1 - y0) * 1000 / (x1 - x0);
+            b := y0 * 1000 - m * x0;
+        end if;
+    
+        if is_vertical_line then
+            -- For vertical lines, just check if x matches and y is within bounds
+            if x = x0 and y >= min(y0, y1) and y <= max(y0, y1) then
+                return true;
+            else
+                return false;
+            end if;
+        else
+            -- Calculate y value on the line for given x, and compare with actual y
+            y_line := (m * x + b) / 1000; -- Adjusting back the scaling
+            -- Check if the calculated y_line matches the input y within a tolerance
+            if abs(y - y_line) <= 0 then -- Tolerance of 0 units
+                -- Additionally, ensure x is within the segment's x bounds
+                if x >= min(x0, x1) and x <= max(x0, x1) then
+                    return true;
+                end if;
+            end if;
+            return false;
+        end if;
+end function;
+
     
 begin
     rst <= not CPU_RESETN;
@@ -129,12 +263,59 @@ begin
                     ADDR_WRITE <= std_logic_vector(to_unsigned(currently_drawing_row, ADDR_WRITE'length)); -- Update the address of the row that we are writing to
                     
                     DATA_WRITE <= (others => '0'); -- Fill the column vector with 0s
-                    for j in 0 to 39 loop -- Go through column pixels (each is 12 bits wide)
-                        if (currently_drawing_row = start_y and j = start_x) or (currently_drawing_row = line1_y and j = line1_x) then
-                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= "111001001001"; -- RGB for the pixel
-                        else
-                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= backgroundRGB; -- RGB for the pixel
+                    for j in 0 to 39 loop -- Go through column pixels (each is 12 bits wide) 
+                    
+                        -- Ball 1:
+                            -- Outer layer
+                        if (abs(currently_drawing_row - line1_y) = 2 and abs(j - line1_x) < 2) or (abs(currently_drawing_row - line1_y) < 2 and abs(j - line1_x) = 2) then
+                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= darken(line1_rgb); 
                         end if;
+                            -- Core    
+                        if abs(currently_drawing_row - line1_y) <= 1 and abs(j - line1_x) <= 1 then
+                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line1_rgb;
+                        end if; 
+                            -- Line
+                        if should_place_dot(j, currently_drawing_row, start_x, start_y, line1_x, line1_y) = true then
+                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line1_rgb; -- RGB for the pixel
+                        end if;        
+                        
+                        -- Ball 2:
+                            -- Outer layer   
+                        if (abs(currently_drawing_row - line2_y) = 2 and abs(j - line2_x) < 2) or (abs(currently_drawing_row - line2_y) < 2 and abs(j - line2_x) = 2) then
+                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= darken(line2_rgb);
+                        end if; 
+                            -- Core
+                        if abs(currently_drawing_row - line2_y) <= 1 and abs(j - line2_x) <= 1 then
+                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line2_rgb;
+                        end if;
+                            -- Line
+                        if should_place_dot(j, currently_drawing_row, start_x, start_y, line2_x, line2_y) = true then
+                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line2_rgb; -- RGB for the pixel
+                        end if;
+                                                          
+--                        -- Draw the ball outer layer
+--                        if (abs(currently_drawing_row - line1_y) = 2 and abs(j - line1_x) < 2) or (abs(currently_drawing_row - line1_y) < 2 and abs(j - line1_x) = 2) then
+--                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= darken(line1_rgb);
+--                        elsif (abs(currently_drawing_row - line2_y) = 2 and abs(j - line2_x) < 2) or (abs(currently_drawing_row - line2_y) < 2 and abs(j - line2_x) = 2) then
+--                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= darken(line2_rgb);
+--                        end if; 
+                        
+--                        -- Line pixels
+--                        if should_place_dot(j, currently_drawing_row, start_x, start_y, line1_x, line1_y) = true then
+--                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line1_rgb; -- RGB for the pixel
+--                        end if;
+                        
+--                        if should_place_dot(j, currently_drawing_row, start_x, start_y, line2_x, line2_y) = true then
+--                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line2_rgb; -- RGB for the pixel
+--                        end if;
+                                              
+--                        -- Draw the ball core
+--                        if abs(currently_drawing_row - line1_y) <= 1 and abs(j - line1_x) <= 1 then
+--                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line1_rgb;
+--                        elsif abs(currently_drawing_row - line2_y) <= 1 and abs(j - line2_x) <= 1 then
+--                            DATA_WRITE((j * 12) to ((j * 12) + 11)) <= line2_rgb;
+--                        end if;
+                                                                        
                     end loop;
                     
                     WE <= '1';
